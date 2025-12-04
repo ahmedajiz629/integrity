@@ -4,12 +4,20 @@ Manifest V3 prototype that verifies whether the bytes you expect actually match 
 
 ## How it works
 
-- The page link must include a fragment parameter named `integrity`, e.g. `https://site.test/#integrity=sha256-BASE64DIGEST`.
-- A content script watches for that parameter, shows a floating indicator, and sends the verification request to the background service worker.
+- The page link should include a fragment parameter named `integrity`, e.g. `https://site.test/#integrity=sha256-BASE64DIGEST`. If it is missing, click the extension icon once to generate one from the current response bytes.
+- A content script watches for that parameter (or its absence), shows a floating indicator, and sends verification/generation requests to the background service worker.
 - The service worker issues its own `fetch` for the same URL (without the fragment), reuses the HTTP cache when possible, hashes the response body with Web Crypto, and reports the result.
-- The indicator turns green on a match, red on mismatch/error, and amber while waiting.
+- The browser action icon mirrors the current state: gray (absent), amber (loading/generating), green (verified), and red (rejected/mismatch). The floating indicator uses the same color language.
 
 Supported algorithms today: `sha256`, `sha384`, `sha512` with Base64 or Base64url encoded digests.
+
+## Generating a token on demand
+
+1. Browse to any page that lacks an `integrity` fragment.
+2. Click the Web Integrity Guard icon. The icon turns amber while the service worker fetches and hashes the page.
+3. Once the digest is ready, the extension injects `#integrity=<algorithm>-<digest>` into the current URL (without a full reload) and immediately verifies it. If everything matches you will see a green icon; otherwise the icon turns red with an explanation in the on-page pill.
+
+Tokens are generated with `sha256` and Base64url encoding by default (no padding, URL-safe characters). Update the code if you need a different policy.
 
 ## Getting started
 

@@ -11,7 +11,8 @@
     "default_title": "Web Integrity Guard"
   },
   "permissions": [
-    "scripting"
+    "scripting",
+    "tabs"
   ],
   "host_permissions": [
     "<all_urls>"

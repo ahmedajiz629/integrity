@@ -1,13 +1,38 @@
 "use strict";
 /// <reference types="chrome" />
 (() => {
+    const DEFAULT_ALGORITHM = "sha256";
+    const DEFAULT_ENCODING = "base64url";
     const indicator = createIndicator();
-    void main();
-    async function main() {
-        const descriptor = parseIntegrityDescriptor(window.location.hash);
-        if (!descriptor) {
+    let currentDescriptor = parseIntegrityDescriptor(window.location.hash);
+    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+        if (!message || typeof message !== "object") {
             return;
         }
+        const { type } = message;
+        if (type === "PROMPT_TOKEN_GENERATION") {
+            if (currentDescriptor) {
+                sendResponse({ skipped: true });
+                return;
+            }
+            void handleTokenGenerationRequest();
+            sendResponse({ ok: true });
+        }
+    });
+    window.addEventListener("hashchange", () => {
+        currentDescriptor = parseIntegrityDescriptor(window.location.hash);
+        void bootstrap();
+    });
+    void bootstrap();
+    async function bootstrap() {
+        if (!currentDescriptor) {
+            updateIndicator("absent", "No integrity token on this URL.");
+            await reportTabState("absent");
+            return;
+        }
+        await verifyDescriptor(currentDescriptor);
+    }
+    async function verifyDescriptor(descriptor) {
         updateIndicator("pending", `Verifying ${descriptor.label} digest...`);
         try {
             const response = await chrome.runtime.sendMessage({
@@ -19,10 +44,12 @@
             });
             if (!response) {
                 updateIndicator("error", "No response from background script.");
+                await reportTabState("rejected");
                 return;
             }
             if (!response.ok) {
                 updateIndicator("error", response.error);
+                await reportTabState("rejected");
                 return;
             }
             if (response.matches) {
@@ -30,11 +57,70 @@
             }
             else {
                 updateIndicator("mismatch", `Digest mismatch. Expected ${descriptor.digest}, received ${response.actualDigest}.`);
+                await reportTabState("rejected");
+                return;
+            }
+            await reportTabState("verified");
+        }
+        catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            updateIndicator("error", message);
+            await reportTabState("rejected");
+        }
+    }
+    async function handleTokenGenerationRequest() {
+        updateIndicator("pending", "Generating integrity token...");
+        await reportTabState("loading");
+        try {
+            const response = await chrome.runtime.sendMessage({
+                type: "GENERATE_PAGE_DIGEST",
+                url: window.location.href,
+                algorithm: DEFAULT_ALGORITHM,
+                encoding: DEFAULT_ENCODING
+            });
+            if (!response || !response.ok) {
+                const errorMessage = response?.error ?? "Unable to generate digest.";
+                updateIndicator("error", errorMessage);
+                await reportTabState("rejected");
+                return;
+            }
+            applyIntegrityFragment(response.algorithm, response.encoding, response.digest);
+            currentDescriptor = parseIntegrityDescriptor(window.location.hash);
+            if (currentDescriptor) {
+                await verifyDescriptor(currentDescriptor);
             }
         }
         catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             updateIndicator("error", message);
+            await reportTabState("rejected");
+        }
+    }
+    async function reportTabState(state) {
+        try {
+            await chrome.runtime.sendMessage({
+                type: "REPORT_TAB_STATE",
+                state,
+                url: window.location.href
+            });
+        }
+        catch (error) {
+            console.warn("Unable to report tab state", error);
+        }
+    }
+    function applyIntegrityFragment(algorithm, encoding, digest) {
+        const normalizedAlgorithm = algorithmIdentifierToFragment(algorithm);
+        const url = new URL(window.location.href);
+        const hashPayload = url.hash.startsWith("#") ? url.hash.slice(1) : url.hash;
+        const params = new URLSearchParams(hashPayload);
+        params.set("integrity", `${normalizedAlgorithm}-${digest}`);
+        const nextHash = params.toString();
+        const nextUrl = `${url.origin}${url.pathname}${url.search}${nextHash ? `#${nextHash}` : ""}`;
+        if (typeof history.replaceState === "function") {
+            history.replaceState(null, document.title, nextUrl);
+        }
+        else {
+            window.location.replace(nextUrl);
         }
     }
     function parseIntegrityDescriptor(hash) {
@@ -76,6 +162,22 @@
             return "base64url";
         }
         return "base64";
+    }
+    function algorithmIdentifierToFragment(identifier) {
+        if (typeof identifier === "string") {
+            return sanitizeAlgorithmToken(identifier);
+        }
+        if (typeof identifier === "object" && "name" in identifier && typeof identifier.name === "string") {
+            return sanitizeAlgorithmToken(identifier.name);
+        }
+        return DEFAULT_ALGORITHM;
+    }
+    function sanitizeAlgorithmToken(value) {
+        const clean = value.toLowerCase().replace(/[^a-z0-9]/gu, "");
+        if (clean === "sha256" || clean === "sha384" || clean === "sha512") {
+            return clean;
+        }
+        return DEFAULT_ALGORITHM;
     }
     function createIndicator() {
         const root = document.createElement("div");
@@ -122,7 +224,8 @@
             pending: "#f5a524",
             match: "#12a454",
             mismatch: "#c44536",
-            error: "#c44536"
+            error: "#c44536",
+            absent: "#6b7280"
         };
         dot.style.backgroundColor = palette[state];
     }
