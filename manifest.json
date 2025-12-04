@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "Web Integrity Guard",
+  "description": "Verifies page content against integrity hashes embedded in the URL fragment.",
+  "version": "0.1.0",
+  "background": {
+    "service_worker": "dist/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Web Integrity Guard"
+  },
+  "permissions": [
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["dist/contentScript.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

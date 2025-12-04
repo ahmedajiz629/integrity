@@ -1,0 +1,23 @@
+{
+  "name": "web-integrity-extension",
+  "version": "0.1.0",
+  "description": "Manifest V3 extension prototype for verifying resource digests",
+  "scripts": {
+    "clean": "rimraf dist",
+    "build": "npm run clean && tsc",
+    "watch": "tsc --watch",
+    "lint": "tsc --noEmit"
+  },
+  "keywords": [
+    "chrome-extension",
+    "integrity"
+  ],
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "devDependencies": {
+    "@types/chrome": "^0.1.32",
+    "rimraf": "^6.1.2",
+    "typescript": "^5.9.3"
+  }
+}
