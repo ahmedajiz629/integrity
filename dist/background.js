@@ -367,7 +367,7 @@ async function handleSourceVerification(message) {
         return { ok: false, error: "Unsupported source provider." };
     }
     try {
-        const response = await fetch(message.source.logUrl, {
+        const response = await fetch(message.source.portalUrl, {
             cache: "reload",
             credentials: "include"
         });
@@ -384,12 +384,12 @@ async function handleSourceVerification(message) {
             return { ok: false, error: `Failed to load log: ${response.status}` };
         }
         const logText = await response.text();
+        console.log(`logText`, logText);
         const found = logText.includes(message.token);
         return {
             ok: true,
             found,
             provider: "github",
-            logUrl: message.source.logUrl,
             portalUrl: message.source.portalUrl
         };
     }

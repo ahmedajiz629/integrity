@@ -8,8 +8,6 @@
     provider: "github";
     repo: string;
     runId: string;
-    jobId: string;
-    logUrl: string;
     portalUrl: string;
   };
 
@@ -74,7 +72,6 @@
         ok: true;
         found: boolean;
         provider: "github";
-        logUrl: string;
         portalUrl: string;
       }
     | {
@@ -355,12 +352,12 @@
     }
 
     const parts = value.split(":").map((segment) => segment.trim());
-    if (parts.length !== 4) {
+    if (parts.length !== 3) {
       return null;
     }
 
-    const [providerCode, repo, runId, jobId] = parts;
-    if (!providerCode || !repo || !runId || !jobId) {
+    const [providerCode, repo, runId] = parts;
+    if (!providerCode || !repo || !runId) {
       return null;
     }
 
@@ -375,15 +372,12 @@
     }
 
     const portalUrl = `https://github.com/${cleanRepo}/actions/runs/${runId}`;
-    const logUrl = `${portalUrl}/job/${jobId}`;
 
     return {
       provider: "github",
       repo: cleanRepo,
       runId,
-      jobId,
       portalUrl,
-      logUrl
     };
   }
 

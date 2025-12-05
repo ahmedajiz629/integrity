@@ -68,8 +68,6 @@ type GithubSourceDescriptor = {
   provider: "github";
   repo: string;
   runId: string;
-  jobId: string;
-  logUrl: string;
   portalUrl: string;
 };
 
@@ -84,7 +82,6 @@ type VerifySourceReferenceResponse =
       ok: true;
       found: boolean;
       provider: "github";
-      logUrl: string;
       portalUrl: string;
     }
   | {
@@ -542,7 +539,7 @@ async function handleSourceVerification(
   }
 
   try {
-    const response = await fetch(message.source.logUrl, {
+    const response = await fetch(message.source.portalUrl, {
       cache: "reload",
       credentials: "include"
     });
@@ -562,13 +559,13 @@ async function handleSourceVerification(
     }
 
     const logText = await response.text();
+    console.log(`logText`, logText)
     const found = logText.includes(message.token);
 
     return {
       ok: true,
       found,
       provider: "github",
-      logUrl: message.source.logUrl,
       portalUrl: message.source.portalUrl
     };
   } catch (error: unknown) {
