@@ -4,11 +4,21 @@
   type ContentVerificationEncoding = "base64" | "base64url";
   type TabVisualState = "absent" | "loading" | "verified" | "rejected";
 
+  type SourceDescriptor = {
+    provider: "github";
+    repo: string;
+    runId: string;
+    jobId: string;
+    logUrl: string;
+    portalUrl: string;
+  };
+
   type IntegrityDescriptor = {
     algorithm: string;
     encoding: ContentVerificationEncoding;
     digest: string;
     label: string;
+    source: SourceDescriptor | null;
   };
 
   type ContentVerifyPageMessage = {
@@ -53,12 +63,40 @@
         error: string;
       };
 
+  type VerifySourceMessage = {
+    type: "VERIFY_SOURCE_REFERENCE";
+    token: string;
+    source: SourceDescriptor;
+  };
+
+  type VerifySourceResponse =
+    | {
+        ok: true;
+        found: boolean;
+        provider: "github";
+        logUrl: string;
+        portalUrl: string;
+      }
+    | {
+        ok: false;
+        error: string;
+        authRequired?: boolean;
+        loginUrl?: string;
+      };
+
+  type ReportSourceSummaryMessage = {
+    type: "REPORT_SOURCE_SUMMARY";
+    hasSource: boolean;
+    portalUrl?: string;
+  };
+
   const DEFAULT_ALGORITHM = "sha256";
   const DEFAULT_ENCODING: ContentVerificationEncoding = "base64url";
 
   const indicator = createIndicator();
   const dangerOverlay = createDangerOverlay();
   let currentDescriptor: IntegrityDescriptor | null = parseIntegrityDescriptor(window.location.hash);
+  let currentSource: SourceDescriptor | null = currentDescriptor?.source ?? null;
 
   chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
     if (!message || typeof message !== "object") {
@@ -79,12 +117,17 @@
 
   window.addEventListener("hashchange", () => {
     currentDescriptor = parseIntegrityDescriptor(window.location.hash);
+    currentSource = currentDescriptor?.source ?? null;
     void bootstrap();
   });
 
   void bootstrap();
 
   async function bootstrap() {
+    currentSource = currentDescriptor?.source ?? null;
+    updateSourceBadge(currentSource);
+    await reportSourceSummary(Boolean(currentSource), currentSource?.portalUrl);
+
     if (!currentDescriptor) {
       updateIndicator("absent", "No integrity token on this URL.");
       await reportTabState("absent");
@@ -110,11 +153,7 @@
       });
 
       if (!response) {
-        await escalateDanger(
-          "error",
-          "Verification unavailable",
-          "No response from the verification service worker."
-        );
+        await escalateDanger("error", "Verification unavailable", "No response from background script.");
         return;
       }
 
@@ -123,16 +162,28 @@
         return;
       }
 
-      if (response.matches) {
-        updateIndicator("match", "Integrity verified.");
-        await reportTabState("verified");
-      } else {
+      if (!response.matches) {
         await escalateDanger(
           "mismatch",
           "Digest mismatch detected",
-          `Expected ${descriptor.digest} but received ${response.actualDigest}.`
+          `Expected ${descriptor.digest}, received ${response.actualDigest}.`
         );
+        return;
       }
+
+      if (descriptor.source) {
+        const sourceStatus = await verifySourceReference(descriptor);
+        if (sourceStatus === "success") {
+          updateIndicator("match", "Integrity & provenance verified.");
+          await reportTabState("verified");
+        } else if (sourceStatus === "auth") {
+          await reportTabState("loading");
+        }
+        return;
+      }
+
+      updateIndicator("match", "Integrity verified.");
+      await reportTabState("verified");
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       await escalateDanger("error", "Verification error", message);
@@ -162,12 +213,60 @@
 
       applyIntegrityFragment(response.algorithm, response.encoding, response.digest);
       currentDescriptor = parseIntegrityDescriptor(window.location.hash);
-      if (currentDescriptor) {
-        await verifyDescriptor(currentDescriptor);
-      }
+      currentSource = currentDescriptor?.source ?? null;
+      await bootstrap();
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       await escalateDanger("error", "Token generation error", message);
+    }
+  }
+
+  type SourceVerificationStatus = "success" | "auth" | "failure";
+
+  async function verifySourceReference(descriptor: IntegrityDescriptor): Promise<SourceVerificationStatus> {
+    if (!descriptor.source) {
+      return "success";
+    }
+
+    updateIndicator("pending", "Checking provenance log...");
+
+    try {
+      const response = await chrome.runtime.sendMessage<VerifySourceMessage, VerifySourceResponse>({
+        type: "VERIFY_SOURCE_REFERENCE",
+        token: descriptor.digest,
+        source: descriptor.source
+      });
+
+      if (!response) {
+        await escalateDanger("error", "Provenance unavailable", "No response from background script.");
+        return "failure";
+      }
+
+      if (!response.ok) {
+        if (response.authRequired) {
+          updateIndicator("pending", "Sign in to GitHub to finish verifying the source log...");
+          await reportTabState("loading");
+          return "auth";
+        }
+
+        await escalateDanger("error", "Provenance check failed", response.error);
+        return "failure";
+      }
+
+      if (response.found) {
+        return "success";
+      }
+
+      await escalateDanger(
+        "mismatch",
+        "Provenance mismatch detected",
+        "The provided digest was not found inside the referenced GitHub Actions log."
+      );
+      return "failure";
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      await escalateDanger("error", "Provenance error", message);
+      return "failure";
     }
   }
 
@@ -180,6 +279,18 @@
       });
     } catch (error) {
       console.warn("Unable to report tab state", error);
+    }
+  }
+
+  async function reportSourceSummary(hasSource: boolean, portalUrl?: string) {
+    try {
+      await chrome.runtime.sendMessage<ReportSourceSummaryMessage, unknown>({
+        type: "REPORT_SOURCE_SUMMARY",
+        hasSource,
+        portalUrl
+      });
+    } catch (error) {
+      console.warn("Unable to report source summary", error);
     }
   }
 
@@ -227,12 +338,52 @@
     }
 
     const encoding: ContentVerificationEncoding = inferEncoding(rawDigest);
+    const sourceDescriptor = parseSourceDescriptor(params.get("integrity-src"));
 
     return {
       algorithm: normalizedAlgorithm,
       encoding,
       digest: rawDigest.trim(),
-      label: normalizedAlgorithm.toUpperCase()
+      label: normalizedAlgorithm.toUpperCase(),
+      source: sourceDescriptor
+    };
+  }
+
+  function parseSourceDescriptor(value: string | null): SourceDescriptor | null {
+    if (!value) {
+      return null;
+    }
+
+    const parts = value.split(":").map((segment) => segment.trim());
+    if (parts.length !== 4) {
+      return null;
+    }
+
+    const [providerCode, repo, runId, jobId] = parts;
+    if (!providerCode || !repo || !runId || !jobId) {
+      return null;
+    }
+
+    if (providerCode !== "gh" && providerCode !== "github") {
+      console.warn("Unsupported source provider", providerCode);
+      return null;
+    }
+
+    const cleanRepo = repo.replace(/^github\.com\//u, "");
+    if (!cleanRepo.includes("/")) {
+      return null;
+    }
+
+    const portalUrl = `https://github.com/${cleanRepo}/actions/runs/${runId}`;
+    const logUrl = `${portalUrl}/job/${jobId}`;
+
+    return {
+      provider: "github",
+      repo: cleanRepo,
+      runId,
+      jobId,
+      portalUrl,
+      logUrl
     };
   }
 
@@ -280,6 +431,7 @@
   type Indicator = {
     root: HTMLDivElement;
     message: HTMLSpanElement;
+    sourceBadge: HTMLSpanElement;
   };
 
   function createIndicator(): Indicator {
@@ -312,13 +464,27 @@
       display: "inline-block"
     } as CSSStyleDeclaration);
 
+    const sourceBadge = document.createElement("span");
+    sourceBadge.id = "web-integrity-indicator-source";
+    Object.assign(sourceBadge.style, {
+      padding: "0.2rem 0.65rem",
+      borderRadius: "999px",
+      background: "rgba(15, 23, 42, 0.1)",
+      color: "#0f172a",
+      fontSize: "0.7rem",
+      fontWeight: "600",
+      letterSpacing: "0.08em",
+      textTransform: "uppercase",
+      display: "none"
+    } as Partial<CSSStyleDeclaration>);
+
     const message = document.createElement("span");
     message.id = "web-integrity-indicator-message";
 
-    root.append(statusDot, message);
+    root.append(statusDot, sourceBadge, message);
     document.documentElement.append(root);
 
-    return { root, message };
+    return { root, message, sourceBadge };
   }
 
   function updateIndicator(state: IndicatorState, text: string) {
@@ -342,6 +508,23 @@
 
     if (state === "match" || state === "pending" || state === "absent") {
       hideDangerOverlay();
+    }
+  }
+
+  function updateSourceBadge(source: SourceDescriptor | null) {
+    if (!indicator.sourceBadge) {
+      return;
+    }
+
+    if (source) {
+      indicator.sourceBadge.style.display = "inline-flex";
+      indicator.sourceBadge.textContent = "Source · GitHub";
+      indicator.root.style.borderColor = "rgba(14, 165, 233, 0.6)";
+      indicator.root.dataset.hasSource = "true";
+    } else {
+      indicator.sourceBadge.style.display = "none";
+      indicator.root.style.borderColor = "rgba(0, 0, 0, 0.1)";
+      delete indicator.root.dataset.hasSource;
     }
   }
 

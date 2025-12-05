@@ -5,9 +5,10 @@ Manifest V3 prototype that verifies whether the bytes you expect actually match 
 ## How it works
 
 - The page link should include a fragment parameter named `integrity`, e.g. `https://site.test/#integrity=sha256-BASE64DIGEST`. If it is missing, click the extension icon once to generate one from the current response bytes.
-- A content script watches for that parameter (or its absence), shows a floating indicator, and sends verification/generation requests to the background service worker.
+- Optionally add `integrity-src=gh:<owner>/<repo>:<run_id>:<job_id>` to describe which GitHub Actions job produced the build. When present, the extension fetches the job log and ensures the declared digest appears there.
+- A content script watches for those parameters (or their absence), shows a floating indicator, and sends verification/generation/provenance requests to the background service worker.
 - The service worker issues its own `fetch` for the same URL (without the fragment), reuses the HTTP cache when possible, hashes the response body with Web Crypto, and reports the result.
-- The browser action icon mirrors the current state: gray (absent), amber (loading/generating), green (verified), and red (rejected/mismatch). A floating indicator uses the same color language.
+- The browser action icon mirrors the current state: gray (absent), amber (loading/generating or waiting for GitHub auth), green (verified), and red (rejected/mismatch). Tabs that declare provenance get an `SRC` badge, and clicking the toolbar icon opens the Actions run.
 - When verification fails, a full-screen danger overlay locks the page and the background service worker fires a desktop notification so you can’t miss the alert.
 
 Supported algorithms today: `sha256`, `sha384`, `sha512` with Base64 or Base64url encoded digests.
@@ -24,6 +25,7 @@ Tokens are generated with `sha256` and Base64url encoding by default (no padding
 
 - A digest mismatch or verification error triggers a modal overlay explaining what went wrong along with options to reload or dismiss.
 - The background worker also pushes a Chrome notification (requires the `notifications` permission) that includes the affected URL so you can audit it later.
+- When provenance is present, the indicator adds a “Source · GitHub” line so you know where the hash came from. Clicking the toolbar icon jumps straight to the Actions run.
 
 ## Getting started
 
@@ -46,8 +48,11 @@ Re-run `npm run build` whenever you change the TypeScript files so that `dist/` 
 
 - Parameter name: `integrity`
 - Value: `<algorithm>-<digest>`
-  - `algorithm`: `sha256`, `sha384`, or `sha512`
-  - `digest`: Base64 (with `+` and `/`) or Base64url (with `-` and `_`). Base64url padding is stripped automatically.
+   - `algorithm`: `sha256`, `sha384`, or `sha512`
+   - `digest`: Base64 (with `+` and `/`) or Base64url (with `-` and `_`). Base64url padding is stripped automatically.
+- Optional provenance: `integrity-src=gh:<owner>/<repo>:<run_id>:<job_id>`
+   - Example: `integrity-src=gh:example/webapp:1234567890:3456789012`
+   - The background worker fetches `https://github.com/<owner>/<repo>/actions/runs/<run_id>/job/<job_id>` with the user’s cookies. If it detects a GitHub login redirect, it prompts you to sign in before retrying. Once authenticated, the extension searches the job log for the declared digest and keeps the badge green only if it finds a match.
 
 Example:
 

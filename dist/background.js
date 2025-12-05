@@ -13,6 +13,7 @@ const TAB_VISUALS = {
 };
 const tabStates = new Map();
 const iconCache = new Map();
+const tabSourceLinks = new Map();
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (isVerifyMessage(message)) {
         const tabId = sender.tab?.id;
@@ -70,10 +71,51 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ ok: true });
         return false;
     }
+    if (isSourceSummaryMessage(message)) {
+        const tabId = sender.tab?.id;
+        if (typeof tabId === "number") {
+            if (message.hasSource && message.portalUrl) {
+                tabSourceLinks.set(tabId, message.portalUrl);
+            }
+            else {
+                tabSourceLinks.delete(tabId);
+            }
+            void refreshBadge(tabId);
+        }
+        sendResponse({ ok: true });
+        return false;
+    }
+    if (isVerifySourceReferenceMessage(message)) {
+        const tabId = sender.tab?.id;
+        if (typeof tabId === "number") {
+            void setTabVisualState(tabId, "loading");
+        }
+        handleSourceVerification(message)
+            .then((result) => {
+            if (typeof tabId === "number" && result.ok) {
+                const nextState = result.found ? "verified" : "rejected";
+                void setTabVisualState(tabId, nextState);
+            }
+            sendResponse(result);
+        })
+            .catch((error) => {
+            if (typeof tabId === "number") {
+                void setTabVisualState(tabId, "rejected");
+            }
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            sendResponse({ ok: false, error: errorMessage });
+        });
+        return true;
+    }
     return false;
 });
 chrome.action.onClicked.addListener(async (tab) => {
     if (!tab.id || !tab.url) {
+        return;
+    }
+    const sourceLink = tabSourceLinks.get(tab.id);
+    if (sourceLink) {
+        await chrome.tabs.create({ url: sourceLink, active: true });
         return;
     }
     const state = tabStates.get(tab.id);
@@ -89,6 +131,7 @@ chrome.action.onClicked.addListener(async (tab) => {
 });
 chrome.tabs.onRemoved.addListener((tabId) => {
     tabStates.delete(tabId);
+    tabSourceLinks.delete(tabId);
 });
 function isVerifyMessage(message) {
     if (!message || typeof message !== "object") {
@@ -217,6 +260,26 @@ function isDangerAlertMessage(message) {
         typeof candidate.message === "string" &&
         typeof candidate.url === "string");
 }
+function isSourceSummaryMessage(message) {
+    if (!message || typeof message !== "object") {
+        return false;
+    }
+    const candidate = message;
+    return (candidate.type === "REPORT_SOURCE_SUMMARY" &&
+        typeof candidate.hasSource === "boolean" &&
+        (candidate.portalUrl === undefined || typeof candidate.portalUrl === "string"));
+}
+function isVerifySourceReferenceMessage(message) {
+    if (!message || typeof message !== "object") {
+        return false;
+    }
+    const candidate = message;
+    return (candidate.type === "VERIFY_SOURCE_REFERENCE" &&
+        typeof candidate.token === "string" &&
+        typeof candidate.source === "object" &&
+        candidate.source !== null &&
+        candidate.source.provider === "github");
+}
 async function handleDigestGeneration(message) {
     const normalizedAlgorithm = normalizeAlgorithm(message.algorithm);
     if (!normalizedAlgorithm) {
@@ -258,6 +321,7 @@ async function setTabVisualState(tabId, state) {
         console.warn("Failed to update icon", error);
     }
     await chrome.action.setTitle({ tabId, title: visuals.title });
+    await refreshBadge(tabId);
 }
 async function getIconForState(state) {
     const cached = iconCache.get(state);
@@ -288,6 +352,73 @@ function createIconAssets(color) {
         assets[size] = ctx.getImageData(0, 0, size, size);
     }
     return assets;
+}
+async function refreshBadge(tabId) {
+    const hasSource = tabSourceLinks.has(tabId);
+    await chrome.action.setBadgeText({ tabId, text: hasSource ? "SRC" : "" });
+    if (hasSource) {
+        await chrome.action.setBadgeBackgroundColor({ tabId, color: "#0ea5e9" });
+    }
+}
+async function handleSourceVerification(message) {
+    if (message.source.provider !== "github") {
+        return { ok: false, error: "Unsupported source provider." };
+    }
+    try {
+        const response = await fetch(message.source.logUrl, {
+            cache: "reload",
+            credentials: "include"
+        });
+        if (requiresGithubAuth(response)) {
+            await promptGithubLogin(response.url);
+            return {
+                ok: false,
+                error: "GitHub authentication required.",
+                authRequired: true,
+                loginUrl: response.url
+            };
+        }
+        if (!response.ok) {
+            return { ok: false, error: `Failed to load log: ${response.status}` };
+        }
+        const logText = await response.text();
+        const found = logText.includes(message.token);
+        return {
+            ok: true,
+            found,
+            provider: "github",
+            logUrl: message.source.logUrl,
+            portalUrl: message.source.portalUrl
+        };
+    }
+    catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return { ok: false, error: errorMessage };
+    }
+}
+function requiresGithubAuth(response) {
+    if (response.status === 401) {
+        return true;
+    }
+    if (response.redirected && response.url.includes("/login")) {
+        return true;
+    }
+    if (response.url) {
+        try {
+            const targetUrl = new URL(response.url);
+            if (targetUrl.pathname.startsWith("/login")) {
+                return true;
+            }
+        }
+        catch (_error) {
+            // ignore parse errors
+        }
+    }
+    return false;
+}
+async function promptGithubLogin(loginUrl) {
+    const url = loginUrl && loginUrl.startsWith("http") ? loginUrl : "https://github.com/login";
+    await chrome.tabs.create({ url, active: true });
 }
 async function showDangerNotification(payload) {
     try {
