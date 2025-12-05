@@ -22,7 +22,11 @@ jobs:
           const fs = require('fs');
           const crypto = require('crypto');
           const data = fs.readFileSync('test/index.html');
-          process.stdout.write(data.length.toString() + '\n');
+          process.stdout.write(`length=${data.length}\n`);
+          const headBytes = Array.from(data.slice(0, 5)).map((b) => b.toString(16).padStart(2, '0')).join(' ');
+          const tailBytes = Array.from(data.slice(-5)).map((b) => b.toString(16).padStart(2, '0')).join(' ');
+          process.stdout.write(`head=${headBytes}\n`);
+          process.stdout.write(`tail=${tailBytes}\n`);
           const hash = crypto.createHash('sha256').update(data).digest('base64');
           const base64url = hash.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
           process.stdout.write(base64url);
