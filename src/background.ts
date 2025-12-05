@@ -58,6 +58,13 @@ type ReportTabStateMessage = {
   state: TabVisualState;
 };
 
+type DangerAlertMessage = {
+  type: "SHOW_DANGER_ALERT";
+  title: string;
+  message: string;
+  url: string;
+};
+
 const TAB_VISUALS: Record<TabVisualState, { color: string; title: string }> = {
   absent: { color: "#6b7280", title: "Web Integrity Guard · Token missing" },
   loading: { color: "#f5a524", title: "Web Integrity Guard · Checking" },
@@ -125,6 +132,12 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
     if (typeof tabId === "number") {
       void setTabVisualState(tabId, message.state);
     }
+    sendResponse({ ok: true });
+    return false;
+  }
+
+  if (isDangerAlertMessage(message)) {
+    void showDangerNotification(message);
     sendResponse({ ok: true });
     return false;
   }
@@ -298,6 +311,20 @@ function isReportStateMessage(message: unknown): message is ReportTabStateMessag
   );
 }
 
+function isDangerAlertMessage(message: unknown): message is DangerAlertMessage {
+  if (!message || typeof message !== "object") {
+    return false;
+  }
+
+  const candidate = message as Partial<DangerAlertMessage>;
+  return (
+    candidate.type === "SHOW_DANGER_ALERT" &&
+    typeof candidate.title === "string" &&
+    typeof candidate.message === "string" &&
+    typeof candidate.url === "string"
+  );
+}
+
 async function handleDigestGeneration(
   message: GeneratePageDigestMessage
 ): Promise<GeneratePageDigestResponse> {
@@ -383,4 +410,17 @@ function createIconAssets(color: string): IconDictionary {
   }
 
   return assets;
+}
+
+async function showDangerNotification(payload: DangerAlertMessage): Promise<void> {
+  try {
+    await chrome.notifications.create({
+      type: "basic",
+      iconUrl: chrome.runtime.getURL("public/icons/alert-128.png"),
+      title: payload.title,
+      message: `${payload.message}\n${payload.url}`
+    });
+  } catch (error) {
+    console.warn("Failed to create danger notification", error);
+  }
 }

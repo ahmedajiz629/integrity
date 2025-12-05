@@ -57,6 +57,7 @@
   const DEFAULT_ENCODING: ContentVerificationEncoding = "base64url";
 
   const indicator = createIndicator();
+  const dangerOverlay = createDangerOverlay();
   let currentDescriptor: IntegrityDescriptor | null = parseIntegrityDescriptor(window.location.hash);
 
   chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
@@ -109,33 +110,32 @@
       });
 
       if (!response) {
-        updateIndicator("error", "No response from background script.");
-        await reportTabState("rejected");
+        await escalateDanger(
+          "error",
+          "Verification unavailable",
+          "No response from the verification service worker."
+        );
         return;
       }
 
       if (!response.ok) {
-        updateIndicator("error", response.error);
-        await reportTabState("rejected");
+        await escalateDanger("error", "Verification failed", response.error);
         return;
       }
 
       if (response.matches) {
         updateIndicator("match", "Integrity verified.");
+        await reportTabState("verified");
       } else {
-        updateIndicator(
+        await escalateDanger(
           "mismatch",
-          `Digest mismatch. Expected ${descriptor.digest}, received ${response.actualDigest}.`
+          "Digest mismatch detected",
+          `Expected ${descriptor.digest} but received ${response.actualDigest}.`
         );
-        await reportTabState("rejected");
-        return;
       }
-
-      await reportTabState("verified");
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      updateIndicator("error", message);
-      await reportTabState("rejected");
+      await escalateDanger("error", "Verification error", message);
     }
   }
 
@@ -156,8 +156,7 @@
 
       if (!response || !response.ok) {
         const errorMessage = response?.error ?? "Unable to generate digest.";
-        updateIndicator("error", errorMessage);
-        await reportTabState("rejected");
+        await escalateDanger("error", "Token generation failed", errorMessage);
         return;
       }
 
@@ -168,8 +167,7 @@
       }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      updateIndicator("error", message);
-      await reportTabState("rejected");
+      await escalateDanger("error", "Token generation error", message);
     }
   }
 
@@ -341,5 +339,125 @@
     };
 
     dot.style.backgroundColor = palette[state];
+
+    if (state === "match" || state === "pending" || state === "absent") {
+      hideDangerOverlay();
+    }
+  }
+
+  async function escalateDanger(state: IndicatorState, title: string, description: string) {
+    updateIndicator(state, description);
+    showDangerOverlay(title, description);
+    await reportTabState("rejected");
+
+    try {
+      await chrome.runtime.sendMessage({
+        type: "SHOW_DANGER_ALERT",
+        title,
+        message: description,
+        url: window.location.href
+      });
+    } catch (error) {
+      console.warn("Unable to escalate danger alert", error);
+    }
+  }
+
+  type DangerOverlay = {
+    root: HTMLDivElement;
+    title: HTMLHeadingElement;
+    description: HTMLParagraphElement;
+  };
+
+  function createDangerOverlay(): DangerOverlay {
+    const root = document.createElement("div");
+    root.id = "web-integrity-danger-overlay";
+    Object.assign(root.style, {
+      position: "fixed",
+      inset: "0",
+      background: "rgba(4, 16, 19, 0.92)",
+      color: "#fff",
+      zIndex: "2147483647",
+      display: "none",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: "2rem"
+    } as CSSStyleDeclaration);
+
+    const panel = document.createElement("div");
+    Object.assign(panel.style, {
+      maxWidth: "32rem",
+      width: "100%",
+      background: "rgba(255, 255, 255, 0.05)",
+      border: "1px solid rgba(255, 255, 255, 0.2)",
+      borderRadius: "1rem",
+      padding: "2rem",
+      boxShadow: "0 30px 80px rgba(0, 0, 0, 0.45)",
+      backdropFilter: "blur(6px)",
+      textAlign: "center"
+    } as CSSStyleDeclaration);
+
+    const title = document.createElement("h2");
+    title.textContent = "Integrity violation";
+    Object.assign(title.style, {
+      fontSize: "1.5rem",
+      marginBottom: "0.75rem"
+    } as CSSStyleDeclaration);
+
+    const description = document.createElement("p");
+    Object.assign(description.style, {
+      marginBottom: "1.5rem",
+      lineHeight: "1.5"
+    } as Partial<CSSStyleDeclaration>);
+
+    const buttonRow = document.createElement("div");
+    Object.assign(buttonRow.style, {
+      display: "flex",
+      gap: "0.75rem",
+      justifyContent: "center"
+    } as Partial<CSSStyleDeclaration>);
+
+    const dismissButton = document.createElement("button");
+    dismissButton.textContent = "Dismiss warning";
+    Object.assign(dismissButton.style, {
+      padding: "0.75rem 1.5rem",
+      borderRadius: "999px",
+      border: "none",
+      cursor: "pointer",
+      fontSize: "1rem",
+      fontWeight: "600",
+      background: "#ffffff",
+      color: "#0f172a"
+    } as Partial<CSSStyleDeclaration>);
+    dismissButton.addEventListener("click", hideDangerOverlay);
+
+    const reloadButton = document.createElement("button");
+    reloadButton.textContent = "Reload page";
+    Object.assign(reloadButton.style, {
+      padding: "0.75rem 1.5rem",
+      borderRadius: "999px",
+      border: "1px solid rgba(255, 255, 255, 0.4)",
+      background: "transparent",
+      color: "#fff",
+      cursor: "pointer",
+      fontSize: "1rem"
+    } as Partial<CSSStyleDeclaration>);
+    reloadButton.addEventListener("click", () => window.location.reload());
+
+    buttonRow.append(reloadButton, dismissButton);
+    panel.append(title, description, buttonRow);
+    root.append(panel);
+    document.documentElement.append(root);
+
+    return { root, title, description };
+  }
+
+  function showDangerOverlay(title: string, description: string) {
+    dangerOverlay.title.textContent = title;
+    dangerOverlay.description.textContent = description;
+    dangerOverlay.root.style.display = "flex";
+  }
+
+  function hideDangerOverlay() {
+    dangerOverlay.root.style.display = "none";
   }
 })();

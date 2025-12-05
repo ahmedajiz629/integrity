@@ -7,7 +7,8 @@ Manifest V3 prototype that verifies whether the bytes you expect actually match 
 - The page link should include a fragment parameter named `integrity`, e.g. `https://site.test/#integrity=sha256-BASE64DIGEST`. If it is missing, click the extension icon once to generate one from the current response bytes.
 - A content script watches for that parameter (or its absence), shows a floating indicator, and sends verification/generation requests to the background service worker.
 - The service worker issues its own `fetch` for the same URL (without the fragment), reuses the HTTP cache when possible, hashes the response body with Web Crypto, and reports the result.
-- The browser action icon mirrors the current state: gray (absent), amber (loading/generating), green (verified), and red (rejected/mismatch). The floating indicator uses the same color language.
+- The browser action icon mirrors the current state: gray (absent), amber (loading/generating), green (verified), and red (rejected/mismatch). A floating indicator uses the same color language.
+- When verification fails, a full-screen danger overlay locks the page and the background service worker fires a desktop notification so you can’t miss the alert.
 
 Supported algorithms today: `sha256`, `sha384`, `sha512` with Base64 or Base64url encoded digests.
 
@@ -18,6 +19,11 @@ Supported algorithms today: `sha256`, `sha384`, `sha512` with Base64 or Base64ur
 3. Once the digest is ready, the extension injects `#integrity=<algorithm>-<digest>` into the current URL (without a full reload) and immediately verifies it. If everything matches you will see a green icon; otherwise the icon turns red with an explanation in the on-page pill.
 
 Tokens are generated with `sha256` and Base64url encoding by default (no padding, URL-safe characters). Update the code if you need a different policy.
+
+### Danger overlay & notifications
+
+- A digest mismatch or verification error triggers a modal overlay explaining what went wrong along with options to reload or dismiss.
+- The background worker also pushes a Chrome notification (requires the `notifications` permission) that includes the affected URL so you can audit it later.
 
 ## Getting started
 

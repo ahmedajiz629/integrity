@@ -65,6 +65,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ ok: true });
         return false;
     }
+    if (isDangerAlertMessage(message)) {
+        void showDangerNotification(message);
+        sendResponse({ ok: true });
+        return false;
+    }
     return false;
 });
 chrome.action.onClicked.addListener(async (tab) => {
@@ -202,6 +207,16 @@ function isReportStateMessage(message) {
         typeof candidate.url === "string" &&
         (candidate.state === "absent" || candidate.state === "loading" || candidate.state === "verified" || candidate.state === "rejected"));
 }
+function isDangerAlertMessage(message) {
+    if (!message || typeof message !== "object") {
+        return false;
+    }
+    const candidate = message;
+    return (candidate.type === "SHOW_DANGER_ALERT" &&
+        typeof candidate.title === "string" &&
+        typeof candidate.message === "string" &&
+        typeof candidate.url === "string");
+}
 async function handleDigestGeneration(message) {
     const normalizedAlgorithm = normalizeAlgorithm(message.algorithm);
     if (!normalizedAlgorithm) {
@@ -273,4 +288,17 @@ function createIconAssets(color) {
         assets[size] = ctx.getImageData(0, 0, size, size);
     }
     return assets;
+}
+async function showDangerNotification(payload) {
+    try {
+        await chrome.notifications.create({
+            type: "basic",
+            iconUrl: chrome.runtime.getURL("public/icons/alert-128.png"),
+            title: payload.title,
+            message: `${payload.message}\n${payload.url}`
+        });
+    }
+    catch (error) {
+        console.warn("Failed to create danger notification", error);
+    }
 }
