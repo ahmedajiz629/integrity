@@ -158,7 +158,9 @@
         return lookup[value.trim().toLowerCase()] ?? null;
     }
     function inferEncoding(digest) {
-        if (/^[A-Za-z0-9-_]+$/u.test(digest) && digest.includes("-") && !digest.includes("+")) {
+        const urlSafe = /^[A-Za-z0-9-_]+$/u.test(digest);
+        const hasUrlOnlyChars = !digest.includes("+") && !digest.includes("/");
+        if (urlSafe && hasUrlOnlyChars) {
             return "base64url";
         }
         return "base64";

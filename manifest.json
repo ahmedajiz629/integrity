@@ -12,7 +12,8 @@
   },
   "permissions": [
     "scripting",
-    "tabs"
+    "tabs",
+    "notifications"
   ],
   "host_permissions": [
     "<all_urls>"
