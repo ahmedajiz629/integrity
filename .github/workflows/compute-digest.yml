@@ -1,0 +1,31 @@
+name: Compute Integrity Digest
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - test/index.html
+      - .github/workflows/compute-digest.yml
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Compute sha256 digest for test/index.html
+        id: digest
+        shell: bash
+        run: |
+          DIGEST=$(node <<'NODE'
+          const fs = require('fs');
+          const crypto = require('crypto');
+          const data = fs.readFileSync('test/index.html');
+          const hash = crypto.createHash('sha256').update(data).digest('base64');
+          const base64url = hash.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+          process.stdout.write(base64url);
+          NODE
+          )
+          echo "sha256-$DIGEST"
+          echo "sha256-$DIGEST" >> "$GITHUB_STEP_SUMMARY"
