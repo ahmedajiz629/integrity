@@ -163,6 +163,7 @@ async function handleVerification(message) {
             return { ok: false, error: `Failed to fetch resource: ${response.status}` };
         }
         const payload = await response.arrayBuffer();
+        logPayloadPreview(payload, "VERIFY_PAGE_DIGEST");
         const digestBuffer = await crypto.subtle.digest(normalizedAlgorithm, payload);
         const actualDigest = encodeDigest(digestBuffer, message.encoding);
         const matches = timingSafeEquals(actualDigest, normalizedDigest);
@@ -295,6 +296,7 @@ async function handleDigestGeneration(message) {
             return { ok: false, error: `Failed to fetch resource: ${response.status}` };
         }
         const payload = await response.arrayBuffer();
+        logPayloadPreview(payload, "GENERATE_PAGE_DIGEST");
         const digestBuffer = await crypto.subtle.digest(normalizedAlgorithm, payload);
         const digest = encodeDigest(digestBuffer, message.encoding);
         return {
@@ -432,4 +434,14 @@ async function showDangerNotification(payload) {
     catch (error) {
         console.warn("Failed to create danger notification", error);
     }
+}
+function logPayloadPreview(buffer, label) {
+    const bytes = new Uint8Array(buffer);
+    const total = bytes.length;
+    const head = bytes.slice(0, Math.min(5, total));
+    const tail = bytes.slice(Math.max(0, total - 5));
+    const format = (segment) => Array.from(segment)
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join(" ");
+    console.log(`[${label}] length=${total} head=${format(head)} tail=${format(tail)}`);
 }

@@ -288,6 +288,7 @@ async function handleVerification(message: VerifyPageMessage): Promise<VerifyPag
     }
 
     const payload = await response.arrayBuffer();
+    logPayloadPreview(payload, "VERIFY_PAGE_DIGEST");
     const digestBuffer = await crypto.subtle.digest(normalizedAlgorithm, payload);
     const actualDigest = encodeDigest(digestBuffer, message.encoding);
     const matches = timingSafeEquals(actualDigest, normalizedDigest);
@@ -457,6 +458,7 @@ async function handleDigestGeneration(
     }
 
     const payload = await response.arrayBuffer();
+    logPayloadPreview(payload, "GENERATE_PAGE_DIGEST");
     const digestBuffer = await crypto.subtle.digest(normalizedAlgorithm, payload);
     const digest = encodeDigest(digestBuffer, message.encoding);
 
@@ -614,4 +616,19 @@ async function showDangerNotification(payload: DangerAlertMessage): Promise<void
   } catch (error) {
     console.warn("Failed to create danger notification", error);
   }
+}
+
+function logPayloadPreview(buffer: ArrayBuffer, label: string): void {
+  const bytes = new Uint8Array(buffer);
+  const total = bytes.length;
+  const head = bytes.slice(0, Math.min(5, total));
+  const tail = bytes.slice(Math.max(0, total - 5));
+  const format = (segment: Uint8Array): string =>
+    Array.from(segment)
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join(" ");
+
+  console.log(
+    `[${label}] length=${total} head=${format(head)} tail=${format(tail)}`
+  );
 }
