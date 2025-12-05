@@ -22,6 +22,7 @@ jobs:
           const fs = require('fs');
           const crypto = require('crypto');
           const data = fs.readFileSync('test/index.html');
+          process.stdout.write(data.length);
           const hash = crypto.createHash('sha256').update(data).digest('base64');
           const base64url = hash.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
           process.stdout.write(base64url);
